@@ -466,15 +466,25 @@ static bool gbt_work_decode(const json_t *val, struct work *work)
 		cbtx[4] = 1; /* in-counter */
 		memset(cbtx+5, 0x00, 32); /* prev txout hash */
 		le32enc((uint32_t *)(cbtx+37), 0xffffffff); /* prev txout index */
-		cbtx_size = 43;
 		/* BIP 34: height in coinbase */
-		for (n = work->height; n; n >>= 8) {
-			cbtx[cbtx_size++] = n & 0xff;
-			if (n < 0x100 && n >= 0x80)
-				cbtx[cbtx_size++] = 0;
+		if (work->height <= 16) {
+			cbtx_size = 41;
+			cbtx[cbtx_size++] = 2; /* scriptsig length */
+			if (work->height == 0)
+				cbtx[cbtx_size++] = 0x00; // OP_0
+			else
+				cbtx[cbtx_size++] = (char)(work->height + (0x51 - 1)); // height + (OP_1 - 1)
+			cbtx[cbtx_size++] = 0x00; // OP_0
+		} else {
+			cbtx_size = 43;
+			for (n = work->height; n; n >>= 8) {
+				cbtx[cbtx_size++] = n & 0xff;
+				if (n < 0x100 && n >= 0x80)
+					cbtx[cbtx_size++] = 0;
+			}
+			cbtx[42] = cbtx_size - 43;
+			cbtx[41] = cbtx_size - 42; /* scriptsig length */
 		}
-		cbtx[42] = cbtx_size - 43;
-		cbtx[41] = cbtx_size - 42; /* scriptsig length */
 		le32enc((uint32_t *)(cbtx+cbtx_size), 0xffffffff); /* sequence */
 		cbtx_size += 4;
 		cbtx[cbtx_size++] = segwit ? 2 : 1; /* out-counter */
