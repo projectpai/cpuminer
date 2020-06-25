@@ -3,8 +3,13 @@ AC_INIT([cpuminer], [2.5.0])
 AC_PREREQ([2.59c])
 AC_CANONICAL_SYSTEM
 AC_CONFIG_SRCDIR([cpu-miner.c])
-AM_INIT_AUTOMAKE([gnu])
+AM_INIT_AUTOMAKE([gnu subdir-objects])
 AC_CONFIG_HEADERS([cpuminer-config.h])
+
+AC_USE_SYSTEM_EXTENSIONS
+
+AC_CANONICAL_BUILD
+AC_CANONICAL_HOST
 
 dnl Make sure anyone changing configure.ac/Makefile.am has a clue
 AM_MAINTAINER_MODE
@@ -38,6 +43,11 @@ AC_CHECK_DECLS([be32dec, le32dec, be32enc, le32enc], [], [],
 AC_FUNC_ALLOCA
 AC_CHECK_FUNCS([getopt_long])
 
+have_win32=false
+have_darwin=false
+PTHREAD_FLAGS="-pthread"
+WS2_LIBS=""
+
 case $target in
   i*86-*-*)
     have_x86=true
@@ -53,14 +63,24 @@ case $target in
     ;;
 esac
 
-PTHREAD_FLAGS="-pthread"
-WS2_LIBS=""
-
 case $target in
   *-*-mingw*)
     have_win32=true
     PTHREAD_FLAGS=""
     WS2_LIBS="-lws2_32"
+    #AC_DEFINE([_WIN32_WINNT], [0x0501], "WinNT version for XP+ support")
+    ;;
+  powerpc-*-darwin*)
+    have_darwin=true
+    CFLAGS="$CFLAGS -faltivec"
+    PTHREAD_FLAGS=""
+    ;;
+  *-*-darwin*)
+    have_darwin=true
+    PTHREAD_FLAGS=""
+	;;
+  *-*-freebsd*)
+    PTHREAD_FLAGS=""
     ;;
 esac
 
@@ -120,10 +140,22 @@ else
 	JANSSON_LIBS=-ljansson
 fi
 
-LIBCURL_CHECK_CONFIG(, 7.15.2, ,
-  [AC_MSG_ERROR([Missing required libcurl >= 7.15.2])])
+if test "x$have_win32" != xtrue; then
+  PKG_CHECK_MODULES([LIBCURL], [libcurl >= 7.18.2], ,[AC_MSG_ERROR([Missing required libcurl dev >= 7.18.2])])
+
+  if test "x$have_darwin" = xtrue; then
+    LIBCURL="/usr/local/opt/curl/lib/libcurl.dylib"
+    LIBCURL_CPPFLAGS="-I/usr/local/opt/curl/include"
+    LIBCURL_LIBS="-lcurl"
+  fi
+else
+  LIBCURL_CPPFLAGS=""
+  LIBCURL_LIBS=""
+fi
 
 AC_SUBST(JANSSON_LIBS)
+AC_SUBST(LIBCURL_LIBS)
+AC_SUBST(LIBCURL_CPPFLAGS)
 AC_SUBST(PTHREAD_FLAGS)
 AC_SUBST(PTHREAD_LIBS)
 AC_SUBST(WS2_LIBS)
@@ -134,3 +166,14 @@ AC_CONFIG_FILES([
 	compat/jansson/Makefile
 	])
 AC_OUTPUT
+
+echo
+echo "Compilation............: make (or gmake)"
+echo "  CPPFLAGS.............: $CPPFLAGS"
+echo "  CFLAGS...............: $CFLAGS"
+echo "  LDFLAGS..............: $LDFLAGS $PTHREAD_FLAGS"
+echo "  LDADD................: $LIBCURL_LIBS $JANSSON_LIBS $PTHREAD_LIBS $WS2_LIBS"
+echo
+echo "Installation...........: make install (as root if needed, with 'su' or 'sudo')"
+echo "  prefix...............: $prefix"
+echo

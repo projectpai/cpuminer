@@ -101,13 +101,17 @@ struct workio_cmd {
 };
 
 enum algos {
-	ALGO_SCRYPT,		/* scrypt(1024,1,1) */
-	ALGO_SHA256D,		/* SHA-256d */
+    ALGO_SCRYPT,    /* scrypt(1024,1,1) */
+    ALGO_SHA256D,   /* SHA-256d */
+    ALGO_SHAKE256,  /* SHAKE-256 (Keccak) */
+    ALGO_PAICOIN    /* SHA-256d until Hybrid Consensus height and SHAKE-256 (Keccak) afterwards */
 };
 
 static const char *algo_names[] = {
-	[ALGO_SCRYPT]		= "scrypt",
-	[ALGO_SHA256D]		= "sha256d",
+    [ALGO_SCRYPT]   = "scrypt",
+    [ALGO_SHA256D]  = "sha256d",
+    [ALGO_SHAKE256] = "shake256",
+    [ALGO_PAICOIN]  = "paicoin"
 };
 
 bool opt_debug = false;
@@ -255,8 +259,17 @@ static struct option const options[] = {
 	{ 0, 0, 0, 0 }
 };
 
+const uint16_t pow_block_header_size = 80;
+const uint16_t hyc_block_header_size = 140;
+
+const uint16_t pow_data_size = 128;
+const uint16_t hyc_data_size = hyc_block_header_size;
+
 struct work {
-	uint32_t data[32];
+    uint32_t data[140]; // classic PoW uses 2*512 bits (80*8=20*32 bits the actual header and 48*8=12*32 bits padding)
+                        // hybrid consensus uses 1088*2 bits (140*8=35*32 bits the actual header and 132*8=33*32 bits padding, 1 0 ..(1054 zeros). 0 1)
+                        // see data_size for selecting the appropriate buffer size
+    uint16_t data_size; // pow_data_size for PoW and hyc_data_size for hybrid consensus (use these constants where necessary)
 	uint32_t target[8];
 
 	int height;
@@ -267,6 +280,16 @@ struct work {
 	size_t xnonce2_len;
 	unsigned char *xnonce2;
 };
+
+static inline bool is_hyc_work(const struct work *w)
+{
+    return w && w->data_size == hyc_data_size;
+}
+
+static inline uint16_t block_header_size_for_work(const struct work *w)
+{
+    return is_hyc_work(w) ? hyc_block_header_size : pow_block_header_size;
+}
 
 static struct work g_work;
 static time_t g_work_time;
@@ -349,6 +372,12 @@ static bool gbt_work_decode(const json_t *val, struct work *work)
 	uint32_t version, curtime, bits;
 	uint32_t prevhash[8];
 	uint32_t target[8];
+    int64_t stake_difficulty = 0;
+    uint16_t vote_bits = 1, voters = 0;
+    uint32_t ticket_pool_size = 0, stake_version = 0;
+    uint8_t fresh_stake = 0, revocations = 0;
+    uint8_t ticket_lottery_state[6] = {0};
+    uint32_t extra_data[8] = {0};
 	int cbtx_size;
 	unsigned char *cbtx = NULL;
 	int tx_count, tx_size;
@@ -416,6 +445,66 @@ static bool gbt_work_decode(const json_t *val, struct work *work)
 		applog(LOG_ERR, "JSON invalid bits");
 		goto out;
 	}
+
+    // parse the stake fields only if the hybrid consensus is enabled
+    if (is_hybrid_consensus_fork_enabled(version, false)) {
+       if (unlikely(!jobj_binary(val, "stakedifficulty", &stake_difficulty, sizeof(stake_difficulty)))) {
+           applog(LOG_ERR, "JSON invalid stake difficulty");
+           goto out;
+       }
+
+        tmp = json_object_get(val, "votebits");
+        if (!tmp || !json_is_integer(tmp)) {
+            applog(LOG_ERR, "JSON invalid vote bits");
+            goto out;
+        }
+        vote_bits = json_integer_value(tmp);
+
+        tmp = json_object_get(val, "ticketpoolsize");
+        if (!tmp || !json_is_number(tmp)) {
+            applog(LOG_ERR, "JSON invalid ticket pool size");
+            goto out;
+        }
+        ticket_pool_size = json_is_integer(tmp) ? json_integer_value(tmp) : json_number_value(tmp);
+
+        if (unlikely(!jobj_binary(val, "ticketlotterystate", &ticket_lottery_state, sizeof(ticket_lottery_state)))) {
+            applog(LOG_ERR, "JSON invalid ticket lotery state");
+            goto out;
+        }
+
+        tmp = json_object_get(val, "stakeversion");
+        if (!tmp || !json_is_number(tmp)) {
+            applog(LOG_ERR, "JSON invalid stake version");
+            goto out;
+        }
+        stake_version = json_is_integer(tmp) ? json_integer_value(tmp) : json_number_value(tmp);
+
+        tmp = json_object_get(val, "freshstake");
+        if (!tmp || !json_is_integer(tmp)) {
+            applog(LOG_ERR, "JSON invalid fresh stake");
+            goto out;
+        }
+        fresh_stake = json_integer_value(tmp);
+
+        tmp = json_object_get(val, "voters");
+        if (!tmp || !json_is_integer(tmp)) {
+            applog(LOG_ERR, "JSON invalid voters");
+            goto out;
+        }
+        voters = json_integer_value(tmp);
+
+        tmp = json_object_get(val, "revocations");
+        if (!tmp || !json_is_integer(tmp)) {
+            applog(LOG_ERR, "JSON invalid revocations");
+            goto out;
+        }
+        revocations = json_integer_value(tmp);
+
+        if (unlikely(!jobj_binary(val, "extradata", &extra_data, sizeof(extra_data)))) {
+            applog(LOG_ERR, "JSON invalid extra data");
+            goto out;
+        }
+    }
 
 	/* find count and size of transactions */
 	txa = json_object_get(val, "transactions");
@@ -622,16 +711,43 @@ static bool gbt_work_decode(const json_t *val, struct work *work)
 	}
 
 	/* assemble block header */
-	work->data[0] = swab32(version);
-	for (i = 0; i < 8; i++)
-		work->data[8 - i] = le32dec(prevhash + i);
-	for (i = 0; i < 8; i++)
-		work->data[9 + i] = be32dec((uint32_t *)merkle_tree[0] + i);
-	work->data[17] = swab32(curtime);
-	work->data[18] = le32dec(&bits);
-	memset(work->data + 19, 0x00, 52);
-	work->data[20] = 0x80000000;
-	work->data[31] = 0x00000280;
+    if (is_hybrid_consensus_fork_enabled(version, false)) {
+        // maintain the 4 bytes swapping philosophy
+        work->data_size = hyc_data_size;
+        work->data[0] = version;
+        for (i = 0; i < 8; i++)
+            work->data[8 - i] = be32dec(prevhash + i);
+        for (i = 0; i < 8; i++)
+            work->data[9 + i] = le32dec((uint32_t *)merkle_tree[0] + i);
+        work->data[17] = curtime;
+        work->data[18] = be32dec(&bits);
+        work->data[19] = 0;
+        work->data[20] = (uint32_t)(be64dec(&stake_difficulty) & 0xFFFFFFFF);
+        work->data[21] = (uint32_t)(be64dec(&stake_difficulty) >> 32);
+        work->data[22] = (uint32_t)vote_bits;
+        work->data[22] |= ticket_pool_size << 16;
+        work->data[23] = ticket_pool_size >> 16;
+        work->data[23] |= ((uint32_t)le16dec((uint16_t*)&ticket_lottery_state)) << 16;
+        work->data[24] = le32dec((uint32_t*)(((uint16_t*)&ticket_lottery_state) + 1));
+        work->data[25] = (uint32_t)voters;
+        work->data[25] |= ((uint32_t)fresh_stake) << 16;
+        work->data[25] |= ((uint32_t)revocations) << 24;
+        for (i = 0; i < 8; i++)
+            work->data[26 + i] = le32dec((uint32_t *)&extra_data + i);
+        work->data[34] = stake_version;
+    } else {
+        work->data_size = pow_data_size;
+        work->data[0] = swab32(version);
+        for (i = 0; i < 8; i++)
+            work->data[8 - i] = le32dec(prevhash + i);
+        for (i = 0; i < 8; i++)
+            work->data[9 + i] = be32dec((uint32_t *)merkle_tree[0] + i);
+        work->data[17] = swab32(curtime);
+        work->data[18] = le32dec(&bits);
+        memset(work->data + 19, 0, pow_data_size - 19*4);
+        work->data[20] = 0x80000000;
+        work->data[31] = 0x00000280;
+    }
 
 	if (unlikely(!jobj_binary(val, "target", target, sizeof(target)))) {
 		applog(LOG_ERR, "JSON invalid target");
@@ -699,8 +815,8 @@ static void share_result(int result, const char *reason)
 static bool submit_upstream_work(CURL *curl, struct work *work)
 {
 	json_t *val, *res, *reason;
-	char data_str[2 * sizeof(work->data) + 1];
-	char s[345];
+    char data_str[2 * sizeof(work->data) + 1] = {0};
+    char s[600];
 	int i;
 	bool rc = false;
 
@@ -735,22 +851,23 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
 	} else if (work->txs) {
 		char *req;
 
-		for (i = 0; i < ARRAY_SIZE(work->data); i++)
-			be32enc(work->data + i, work->data[i]);
-		bin2hex(data_str, (unsigned char *)work->data, 80);
+        if (!is_hyc_work(work))
+            for (i = 0; i < ARRAY_SIZE(work->data); i++)
+                be32enc(work->data + i, work->data[i]);
+        bin2hex(data_str, (unsigned char *)work->data, block_header_size_for_work(work));
 		if (work->workid) {
 			char *params;
 			val = json_object();
 			json_object_set_new(val, "workid", json_string(work->workid));
 			params = json_dumps(val, 0);
 			json_decref(val);
-			req = malloc(128 + 2*80 + strlen(work->txs) + strlen(params));
+            req = malloc(128 + 2*block_header_size_for_work(work) + strlen(work->txs) + strlen(params));
 			sprintf(req,
 				"{\"method\": \"submitblock\", \"params\": [\"%s%s\", %s], \"id\":1}\r\n",
 				data_str, work->txs, params);
 			free(params);
 		} else {
-			req = malloc(128 + 2*80 + strlen(work->txs));
+            req = malloc(128 + 2*block_header_size_for_work(work) + strlen(work->txs));
 			sprintf(req,
 				"{\"method\": \"submitblock\", \"params\": [\"%s%s\"], \"id\":1}\r\n",
 				data_str, work->txs);
@@ -996,6 +1113,8 @@ static void *workio_thread(void *userdata)
 
 static bool get_work(struct thr_info *thr, struct work *work)
 {
+    // get work is no longer supported, thus not updated to hybrid consensus
+
 	struct workio_cmd *wc;
 	struct work *work_heap;
 
@@ -1087,16 +1206,43 @@ static void stratum_gen_work(struct stratum_ctx *sctx, struct work *work)
 	for (i = 0; i < sctx->xnonce2_size && !++sctx->job.xnonce2[i]; i++);
 
 	/* Assemble block header */
-	memset(work->data, 0, 128);
-	work->data[0] = le32dec(sctx->job.version);
-	for (i = 0; i < 8; i++)
-		work->data[1 + i] = le32dec((uint32_t *)sctx->job.prevhash + i);
-	for (i = 0; i < 8; i++)
-		work->data[9 + i] = be32dec((uint32_t *)merkle_root + i);
-	work->data[17] = le32dec(sctx->job.ntime);
-	work->data[18] = le32dec(sctx->job.nbits);
-	work->data[20] = 0x80000000;
-	work->data[31] = 0x00000280;
+    if (is_hybrid_consensus_fork_enabled(le32dec(sctx->job.version), false)) {
+        // maintain the 4 bytes swapping philosophy
+        work->data_size = hyc_data_size;
+        work->data[0] = be32dec(sctx->job.version);
+        for (i = 0; i < 8; i++)
+            work->data[1 + i] = be32dec((uint32_t *)sctx->job.prevhash + i);
+        for (i = 0; i < 8; i++)
+            work->data[9 + i] = le32dec((uint32_t *)merkle_root + i);
+        work->data[17] = be32dec(sctx->job.ntime);
+        work->data[18] = be32dec(sctx->job.nbits);
+        work->data[19] = 0;
+        work->data[20] = (uint32_t)(be64dec(&sctx->job.stake_difficulty) & 0xFFFFFFFF);
+        work->data[21] = (uint32_t)(be64dec(&sctx->job.stake_difficulty) >> 32);
+        work->data[22] = be16dec(&sctx->job.vote_bits);
+        work->data[22] |= be32dec(&sctx->job.ticket_pool_size) << 16;
+        work->data[23] = be32dec(&sctx->job.ticket_pool_size) >> 16;
+        work->data[23] |= ((uint32_t)be16dec((uint16_t *)&sctx->job.ticket_lottery_state + 2) << 16);
+        work->data[24] |= be32dec((uint32_t *)&sctx->job.ticket_lottery_state);
+        work->data[25] = (uint32_t)be16dec(&sctx->job.voters);
+        work->data[25] |= ((uint32_t)sctx->job.fresh_stake) << 16;
+        work->data[25] |= ((uint32_t)sctx->job.revocations) << 24;
+        for (i = 0; i < 8; i++)
+            work->data[26 + i] = le32dec((uint32_t *)&sctx->job.extra_data  + i);
+        work->data[34] = be32dec(&sctx->job.stake_version);
+    } else {
+        work->data_size = pow_data_size;
+        work->data[0] = le32dec(sctx->job.version);
+        for (i = 0; i < 8; i++)
+            work->data[1 + i] = le32dec((uint32_t *)sctx->job.prevhash + i);
+        for (i = 0; i < 8; i++)
+            work->data[9 + i] = be32dec((uint32_t *)merkle_root + i);
+        work->data[17] = le32dec(sctx->job.ntime);
+        work->data[18] = le32dec(sctx->job.nbits);
+        memset(work->data + 19, 0, pow_data_size - 19*4);
+        work->data[20] = 0x80000000;
+        work->data[31] = 0x00000280;
+    }
 
 	pthread_mutex_unlock(&sctx->work_lock);
 
@@ -1160,7 +1306,7 @@ static void *miner_thread(void *userdata)
 			while (time(NULL) >= g_work_time + 120)
 				sleep(1);
 			pthread_mutex_lock(&g_work_lock);
-			if (work.data[19] >= end_nonce && !memcmp(work.data, g_work.data, 76))
+            if (work.data[19] >= end_nonce && !memcmp(work.data, g_work.data, 76) && (!is_hyc_work(&work) || !memcmp(work.data+20, g_work.data+20, 60)))
 				stratum_gen_work(&stratum, &g_work);
 		} else {
 			int min_scantime = have_longpoll ? LP_SCANTIME : opt_scantime;
@@ -1183,7 +1329,7 @@ static void *miner_thread(void *userdata)
 				continue;
 			}
 		}
-		if (memcmp(work.data, g_work.data, 76)) {
+        if (memcmp(work.data, g_work.data, 76) || (is_hyc_work(&work) && memcmp(work.data+20, g_work.data+20, 60))) {
 			work_free(&work);
 			work_copy(&work, &g_work);
 			work.data[19] = 0xffffffffU / opt_n_threads * thr_id;
@@ -1207,7 +1353,15 @@ static void *miner_thread(void *userdata)
 			case ALGO_SHA256D:
 				max64 = 0x1fffff;
 				break;
-			}
+            case ALGO_SHAKE256:
+                // TODO: is this correct?
+                max64 = 0x1fffff;
+                break;
+            case ALGO_PAICOIN:
+                // TODO: is this correct?
+                max64 = 0x1fffff;
+                break;
+            }
 		}
 		if (work.data[19] + max64 > end_nonce)
 			max_nonce = end_nonce;
@@ -1228,6 +1382,20 @@ static void *miner_thread(void *userdata)
 			rc = scanhash_sha256d(thr_id, work.data, work.target,
 			                      max_nonce, &hashes_done);
 			break;
+
+        case ALGO_SHAKE256:
+            rc = scanhash_shake256(thr_id, work.data, work.target,
+                                   max_nonce, &hashes_done);
+            break;
+
+        case ALGO_PAICOIN:
+            if (is_hyc_work(&work))
+                rc = scanhash_shake256(thr_id, work.data, work.target,
+                                       max_nonce, &hashes_done);
+            else
+                rc = scanhash_sha256d(thr_id, work.data, work.target,
+                                      max_nonce, &hashes_done);
+            break;
 
 		default:
 			/* should never happen */

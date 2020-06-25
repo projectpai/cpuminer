@@ -65,9 +65,29 @@ enum {
 #if ((__GNUC__ > 4) || (__GNUC__ == 4 && __GNUC_MINOR__ >= 3))
 #define WANT_BUILTIN_BSWAP
 #else
-#define bswap_32(x) ((((x) << 24) & 0xff000000u) | (((x) << 8) & 0x00ff0000u) \
-                   | (((x) >> 8) & 0x0000ff00u) | (((x) >> 24) & 0x000000ffu))
+#define bswap_16(x) (((x) >> 8) | ((x) << 8));
+#define bswap_32(x) ((((x) << 24) & 0xff000000u) \
+                    | (((x) << 8) & 0x00ff0000u) \
+                    | (((x) >> 8) & 0x0000ff00u) \
+                    | (((x) >> 24) & 0x000000ffu))
+#define bswap_64(x) ((((x) >> 56) & 0xff00000000000000ull) \
+                    | (((x) >> 40) & 0x00ff000000000000ull) \
+                    | (((x) >> 24) & 0x0000ff0000000000ull) \
+                    | (((x) >> 8) & 0x000000ff00000000ull) \
+                    | (((x) >> 8) & 0x00000000ff000000ull) \
+                    | (((x) << 24) & 0x0000000000ff0000ull) \
+                    | (((x) << 40) & 0x000000000000ff00ull) \
+                    | (((x) << 56) & 0x00000000000000ffull))
 #endif
+
+static inline uint16_t swab16(uint16_t v)
+{
+#ifdef WANT_BUILTIN_BSWAP
+    return __builtin_bswap16(v);
+#else
+    return bswap_16(v);
+#endif
+}
 
 static inline uint32_t swab32(uint32_t v)
 {
@@ -78,8 +98,51 @@ static inline uint32_t swab32(uint32_t v)
 #endif
 }
 
+static inline uint64_t swab64(uint64_t v)
+{
+#ifdef WANT_BUILTIN_BSWAP
+    return __builtin_bswap64(v);
+#else
+    return bswap_64(v);
+#endif
+}
+
 #ifdef HAVE_SYS_ENDIAN_H
 #include <sys/endian.h>
+#endif
+
+#if !HAVE_DECL_BE16DEC
+static inline uint16_t be16dec(const void *pp)
+{
+    const uint8_t *p = (uint8_t const *)pp;
+    return ((uint16_t)(p[1]) + ((uint16_t)(p[0]) << 8));
+}
+#endif
+
+#if !HAVE_DECL_LE16DEC
+static inline uint16_t le16dec(const void *pp)
+{
+    const uint8_t *p = (uint8_t const *)pp;
+    return ((uint16_t)(p[0]) + ((uint16_t)(p[1]) << 8));
+}
+#endif
+
+#if !HAVE_DECL_BE16ENC
+static inline void be16enc(void *pp, uint16_t x)
+{
+    uint8_t *p = (uint8_t *)pp;
+    p[1] = x & 0xff;
+    p[0] = (x >> 8) & 0xff;
+}
+#endif
+
+#if !HAVE_DECL_LE16ENC
+static inline void le16enc(void *pp, uint16_t x)
+{
+    uint8_t *p = (uint8_t *)pp;
+    p[0] = x & 0xff;
+    p[1] = (x >> 8) & 0xff;
+}
 #endif
 
 #if !HAVE_DECL_BE32DEC
@@ -122,6 +185,58 @@ static inline void le32enc(void *pp, uint32_t x)
 }
 #endif
 
+#if !HAVE_DECL_BE64DEC
+static inline uint64_t be64dec(const void *pp)
+{
+    const uint8_t *p = (uint8_t const *)pp;
+    return ((uint64_t)(p[7]) + ((uint64_t)(p[6]) << 8) +
+            ((uint64_t)(p[5]) << 16) + ((uint64_t)(p[4]) << 24) +
+            ((uint64_t)(p[3]) << 32) + ((uint64_t)(p[2]) << 40) +
+            ((uint64_t)(p[1]) << 48) + ((uint64_t)(p[0]) << 56));
+}
+#endif
+
+#if !HAVE_DECL_LE64DEC
+static inline uint64_t le64dec(const void *pp)
+{
+    const uint8_t *p = (uint8_t const *)pp;
+    return ((uint64_t)(p[0]) + ((uint64_t)(p[1]) << 8) +
+            ((uint64_t)(p[2]) << 16) + ((uint64_t)(p[3]) << 24) +
+            ((uint64_t)(p[4]) << 32) + ((uint64_t)(p[5]) << 40) +
+            ((uint64_t)(p[6]) << 48) + ((uint64_t)(p[7]) << 56));
+}
+#endif
+
+#if !HAVE_DECL_BE64ENC
+static inline void be64enc(void *pp, uint64_t x)
+{
+    uint8_t *p = (uint8_t *)pp;
+    p[7] = x & 0xff;
+    p[6] = (x >> 8) & 0xff;
+    p[5] = (x >> 16) & 0xff;
+    p[4] = (x >> 24) & 0xff;
+    p[3] = (x >> 32) & 0xff;
+    p[2] = (x >> 40) & 0xff;
+    p[1] = (x >> 48) & 0xff;
+    p[0] = (x >> 56) & 0xff;
+}
+#endif
+
+#if !HAVE_DECL_LE64ENC
+static inline void le64enc(void *pp, uint64_t x)
+{
+    uint8_t *p = (uint8_t *)pp;
+    p[0] = x & 0xff;
+    p[1] = (x >> 8) & 0xff;
+    p[2] = (x >> 16) & 0xff;
+    p[3] = (x >> 24) & 0xff;
+    p[4] = (x >> 32) & 0xff;
+    p[5] = (x >> 40) & 0xff;
+    p[6] = (x >> 48) & 0xff;
+    p[7] = (x >> 56) & 0xff;
+}
+#endif
+
 #if JANSSON_MAJOR_VERSION >= 2
 #define JSON_LOADS(str, err_ptr) json_loads(str, 0, err_ptr)
 #define JSON_LOAD_FILE(path, err_ptr) json_load_file(path, 0, err_ptr)
@@ -131,6 +246,12 @@ static inline void le32enc(void *pp, uint32_t x)
 #endif
 
 #define USER_AGENT PACKAGE_NAME "/" PACKAGE_VERSION
+
+extern const uint16_t pow_block_header_size;
+extern const uint16_t hyc_block_header_size;
+
+extern const uint16_t pow_data_size;
+extern const uint16_t hyc_data_size;
 
 void sha256_init(uint32_t *state);
 void sha256_transform(uint32_t *state, const uint32_t *block, int swap);
@@ -153,6 +274,9 @@ void sha256_transform_8way(uint32_t *state, const uint32_t *block, int swap);
 
 extern int scanhash_sha256d(int thr_id, uint32_t *pdata,
 	const uint32_t *ptarget, uint32_t max_nonce, unsigned long *hashes_done);
+
+extern int scanhash_shake256(int thr_id, uint32_t *pdata,
+    const uint32_t *ptarget, uint32_t max_nonce, unsigned long *hashes_done);
 
 extern unsigned char *scrypt_buffer_alloc(int N);
 extern int scanhash_scrypt(int thr_id, uint32_t *pdata,
@@ -207,6 +331,13 @@ extern int timeval_subtract(struct timeval *result, struct timeval *x,
 extern bool fulltest(const uint32_t *hash, const uint32_t *target);
 extern void diff_to_target(uint32_t *target, double diff);
 
+/*
+ * Detect the activation of the hybrid consensus by checking the corresponding,
+ * bit in the block header version. Treat both little and big endian situations,
+ * as specified by the user
+ */
+extern bool is_hybrid_consensus_fork_enabled(const uint32_t version, bool le);
+
 struct stratum_job {
 	char *job_id;
 	unsigned char prevhash[32];
@@ -217,7 +348,16 @@ struct stratum_job {
 	unsigned char **merkle;
 	unsigned char version[4];
 	unsigned char nbits[4];
-	unsigned char ntime[4];
+    unsigned char ntime[4];
+    unsigned char stake_difficulty[8];
+    unsigned char vote_bits[2];
+    unsigned char voters[2];
+    unsigned char ticket_pool_size[4];
+    unsigned char stake_version[4];
+    unsigned char fresh_stake;
+    unsigned char revocations;
+    unsigned char ticket_lottery_state[6];
+    unsigned char extra_data[32];
 	bool clean;
 	double diff;
 };
