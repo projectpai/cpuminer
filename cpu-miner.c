@@ -259,11 +259,13 @@ static struct option const options[] = {
 	{ 0, 0, 0, 0 }
 };
 
+#define HYC_BLOCK_HEADER_SIZE 140
+
 const uint16_t pow_block_header_size = 80;
-const uint16_t hyc_block_header_size = 140;
+const uint16_t hyc_block_header_size = HYC_BLOCK_HEADER_SIZE;
 
 const uint16_t pow_data_size = 128;
-const uint16_t hyc_data_size = hyc_block_header_size;
+const uint16_t hyc_data_size = HYC_BLOCK_HEADER_SIZE;
 
 struct work {
     uint32_t data[140]; // classic PoW uses 2*512 bits (80*8=20*32 bits the actual header and 48*8=12*32 bits padding)

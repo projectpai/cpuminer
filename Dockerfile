@@ -16,16 +16,17 @@
 FROM            ubuntu:16.04
 
 RUN             apt-get update -qq && \
-                apt-get install -qqy automake libcurl4-openssl-dev git make gcc
+                apt-get install -qqy pkg-config m4 automake autogen autoconf libcurl4-openssl-dev make gcc
 
-RUN             git clone https://github.com/projectpai/cpuminer.git
+# RUN             git clone https://github.com/projectpai/cpuminer
+COPY            cpuminer.tar.gz /tmp/cpuminer.tar.gz
 
-RUN             cd cpuminer
-
-#RUN                git checkout feature/sha3
-
-RUN             ./autogen.sh && \
+RUN             mkdir cpuminer && \
+                tar xfz /tmp/cpuminer.tar.gz --strip 1 -C cpuminer && \
+                cd cpuminer && \
+                ./autogen.sh && \
                 ./configure CFLAGS="-O3" && \
+                gcc --version && \
                 make
 
 WORKDIR         /cpuminer
