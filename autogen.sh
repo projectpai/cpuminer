@@ -1,12 +1,10 @@
 #!/bin/sh
 
-# You need autoconf 2.5x, preferably 2.57 or later
-# You need automake 1.7 or later. 1.6 might work.
+bs_dir=$(cd "$(dirname "$0")"; pwd)
 
-set -e
+autoreconf -fi "${bs_dir}"
 
-aclocal
-autoheader
-automake --gnu --add-missing --copy
-autoconf
-
+if test -n "$1" && test -z "$NOCONFIGURE" ; then
+	echo 'Configuring...'
+	"$bs_dir"/configure "$@"
+fi

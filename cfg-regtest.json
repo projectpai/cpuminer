@@ -1,0 +1,14 @@
+{
+    "_comment1": "PAIcoin regtest direct mining",
+
+    "url": "http://127.0.0.1:19566/",
+    "user": "user",
+    "pass": "password",
+    "coinbase-addr": "McvP9ELi7SN4rE2JU5X9E2h7txQyH7nUQd",
+
+    "algo": "paicoin",
+    "threads": "1",
+
+    "no-stratum": true,
+    "quiet": true
+}

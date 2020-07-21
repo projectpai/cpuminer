@@ -905,6 +905,15 @@ void diff_to_target(uint32_t *target, double diff)
 	}
 }
 
+/* Hybrid consensus activation hard fork version bit (little and big endian) */
+static const uint32_t HARDFORK_VERSION_BIT_LE = 0x00000080;
+static const uint32_t HARDFORK_VERSION_BIT_BE = 0x80000000;
+
+inline bool is_hybrid_consensus_fork_enabled(const uint32_t version, bool le)
+{
+    return version & (le ? HARDFORK_VERSION_BIT_LE : HARDFORK_VERSION_BIT_BE);
+}
+
 #ifdef WIN32
 #define socket_blocks() (WSAGetLastError() == WSAEWOULDBLOCK)
 #else
@@ -1334,8 +1343,9 @@ out:
 
 static bool stratum_notify(struct stratum_ctx *sctx, json_t *params)
 {
-	const char *job_id, *prevhash, *coinb1, *coinb2, *version, *nbits, *ntime;
+    const char *job_id, *prevhash, *coinb1, *coinb2, *version, *nbits, *ntime;
 	size_t coinb1_size, coinb2_size;
+    const char *stake_difficulty, *vote_bits, *voters, *ticket_pool_size, *stake_version, *fresh_stake, *revocations, *ticket_lottery_state, *extra_data;
 	bool clean, ret = false;
 	int merkle_count, i;
 	json_t *merkle_arr;
@@ -1352,7 +1362,16 @@ static bool stratum_notify(struct stratum_ctx *sctx, json_t *params)
 	version = json_string_value(json_array_get(params, 5));
 	nbits = json_string_value(json_array_get(params, 6));
 	ntime = json_string_value(json_array_get(params, 7));
-	clean = json_is_true(json_array_get(params, 8));
+    clean = json_is_true(json_array_get(params, 8));
+    stake_difficulty = json_string_value(json_array_get(params, 8));
+    vote_bits = json_string_value(json_array_get(params, 9));
+    ticket_pool_size = json_string_value(json_array_get(params, 10));
+    ticket_lottery_state = json_string_value(json_array_get(params, 11));
+    voters = json_string_value(json_array_get(params, 12));
+    fresh_stake = json_string_value(json_array_get(params, 13));
+    revocations = json_string_value(json_array_get(params, 14));
+    extra_data = json_string_value(json_array_get(params, 15));
+    stake_version = json_string_value(json_array_get(params, 16));
 
 	if (!job_id || !prevhash || !coinb1 || !coinb2 || !version || !nbits || !ntime ||
 	    strlen(prevhash) != 64 || strlen(version) != 8 ||
@@ -1401,6 +1420,17 @@ static bool stratum_notify(struct stratum_ctx *sctx, json_t *params)
 	hex2bin(sctx->job.version, version, 4);
 	hex2bin(sctx->job.nbits, nbits, 4);
 	hex2bin(sctx->job.ntime, ntime, 4);
+
+    hex2bin(sctx->job.stake_difficulty, stake_difficulty, 8);
+    hex2bin(sctx->job.vote_bits, vote_bits, 2);
+    hex2bin(sctx->job.ticket_pool_size, ticket_pool_size, 4);
+    hex2bin(sctx->job.ticket_lottery_state, ticket_lottery_state, 6);
+    hex2bin(sctx->job.voters, voters, 2);
+    hex2bin(&sctx->job.fresh_stake, fresh_stake, 1);
+    hex2bin(&sctx->job.revocations, revocations, 1);
+    hex2bin(sctx->job.extra_data, extra_data, 32);
+    hex2bin(sctx->job.stake_version, stake_version, 4);
+
 	sctx->job.clean = clean;
 
 	sctx->job.diff = sctx->next_diff;
