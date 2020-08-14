@@ -1298,6 +1298,7 @@ static void *miner_thread(void *userdata)
 		}
 	}
 
+    int alreadySubmitted = 0;
 	while (1) {
 		unsigned long hashes_done;
 		struct timeval tv_start, tv_end, diff;
@@ -1308,8 +1309,10 @@ static void *miner_thread(void *userdata)
 			while (time(NULL) >= g_work_time + 120)
 				sleep(1);
 			pthread_mutex_lock(&g_work_lock);
-            if (work.data[19] >= end_nonce && !memcmp(work.data, g_work.data, 76) && (!is_hyc_work(&work) || !memcmp(work.data+20, g_work.data+20, 60)))
+            if (work.data[19] >= end_nonce && !memcmp(work.data, g_work.data, 76) && (!is_hyc_work(&work) || !memcmp(((uint8_t*)work.data)+80, ((uint8_t*)g_work.data)+80, 60))) {
 				stratum_gen_work(&stratum, &g_work);
+                alreadySubmitted = 0;
+            }
 		} else {
 			int min_scantime = have_longpoll ? LP_SCANTIME : opt_scantime;
 			/* obtain new work from internal workio thread */
@@ -1325,17 +1328,19 @@ static void *miner_thread(void *userdata)
 					goto out;
 				}
 				g_work_time = have_stratum ? 0 : time(NULL);
+                alreadySubmitted = 0;
 			}
 			if (have_stratum) {
 				pthread_mutex_unlock(&g_work_lock);
 				continue;
 			}
 		}
-        if (memcmp(work.data, g_work.data, 76) || (is_hyc_work(&work) && memcmp(work.data+20, g_work.data+20, 60))) {
+        if (memcmp(work.data, g_work.data, 76) || (is_hyc_work(&work) && memcmp(((uint8_t*)work.data)+80, ((uint8_t*)g_work.data)+80, 60))) {
 			work_free(&work);
 			work_copy(&work, &g_work);
 			work.data[19] = 0xffffffffU / opt_n_threads * thr_id;
-		} else
+            alreadySubmitted = 0;
+        } else
 			work.data[19]++;
 		pthread_mutex_unlock(&g_work_lock);
 		work_restart[thr_id].restart = 0;
@@ -1429,9 +1434,16 @@ static void *miner_thread(void *userdata)
 			}
 		}
 
+        if (alreadySubmitted && is_hyc_work(&work)) {
+            usleep(1000);
+            continue;
+        }
+
 		/* if nonce found, submit work */
 		if (rc && !opt_benchmark && !submit_work(mythr, &work))
 			break;
+
+        alreadySubmitted = 1;
 	}
 
 out:
