@@ -1421,15 +1421,50 @@ static bool stratum_notify(struct stratum_ctx *sctx, json_t *params)
 	hex2bin(sctx->job.nbits, nbits, 4);
 	hex2bin(sctx->job.ntime, ntime, 4);
 
-    hex2bin(sctx->job.stake_difficulty, stake_difficulty, 8);
-    hex2bin(sctx->job.vote_bits, vote_bits, 2);
-    hex2bin(sctx->job.ticket_pool_size, ticket_pool_size, 4);
-    hex2bin(sctx->job.ticket_lottery_state, ticket_lottery_state, 6);
-    hex2bin(sctx->job.voters, voters, 2);
-    hex2bin(&sctx->job.fresh_stake, fresh_stake, 1);
-    hex2bin(&sctx->job.revocations, revocations, 1);
-    hex2bin(sctx->job.extra_data, extra_data, 32);
-    hex2bin(sctx->job.stake_version, stake_version, 4);
+    if (stake_difficulty)
+        hex2bin(sctx->job.stake_difficulty, stake_difficulty, 8);
+    else
+        memset(sctx->job.stake_difficulty, 0, sizeof(sctx->job.stake_difficulty));
+
+    if (vote_bits)
+        hex2bin(sctx->job.vote_bits, vote_bits, 2);
+    else
+        memset(sctx->job.vote_bits, 0, sizeof(sctx->job.vote_bits));
+
+    if (ticket_pool_size)
+        hex2bin(sctx->job.ticket_pool_size, ticket_pool_size, 4);
+    else
+        memset(sctx->job.ticket_pool_size, 0, sizeof(sctx->job.ticket_pool_size));
+
+    if (ticket_lottery_state)
+        hex2bin(sctx->job.ticket_lottery_state, ticket_lottery_state, 6);
+    else
+        memset(sctx->job.ticket_lottery_state, 0, sizeof(sctx->job.ticket_lottery_state));
+
+    if (voters)
+        hex2bin(sctx->job.voters, voters, 2);
+    else
+        memset(sctx->job.voters, 0, sizeof(sctx->job.voters));
+
+    if (fresh_stake)
+        hex2bin(&sctx->job.fresh_stake, fresh_stake, 1);
+    else
+        sctx->job.fresh_stake = 0;
+
+    if (revocations)
+        hex2bin(&sctx->job.revocations, revocations, 1);
+    else
+        sctx->job.revocations = 0;
+
+    if (extra_data)
+        hex2bin(sctx->job.extra_data, extra_data, 32);
+    else
+        memset(sctx->job.extra_data, 0, sizeof(sctx->job.extra_data));
+
+    if (stake_version)
+        hex2bin(sctx->job.stake_version, stake_version, 4);
+    else
+        memset(sctx->job.stake_version, 0, sizeof(sctx->job.stake_version));
 
 	sctx->job.clean = clean;
 
