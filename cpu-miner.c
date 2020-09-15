@@ -39,7 +39,7 @@
 #include "miner.h"
 
 #define PROGRAM_NAME		"minerd"
-#define LP_SCANTIME		5
+#define LP_SCANTIME 		5
 
 #ifdef __linux /* Linux specific policy and affinity management */
 #include <sched.h>
@@ -259,11 +259,13 @@ static struct option const options[] = {
 	{ 0, 0, 0, 0 }
 };
 
+#define HYC_BLOCK_HEADER_SIZE 140
+
 const uint16_t pow_block_header_size = 80;
-const uint16_t hyc_block_header_size = 140;
+const uint16_t hyc_block_header_size = HYC_BLOCK_HEADER_SIZE;
 
 const uint16_t pow_data_size = 128;
-const uint16_t hyc_data_size = hyc_block_header_size;
+const uint16_t hyc_data_size = HYC_BLOCK_HEADER_SIZE;
 
 struct work {
     uint32_t data[140]; // classic PoW uses 2*512 bits (80*8=20*32 bits the actual header and 48*8=12*32 bits padding)
@@ -447,7 +449,7 @@ static bool gbt_work_decode(const json_t *val, struct work *work)
 	}
 
     // parse the stake fields only if the hybrid consensus is enabled
-    if (is_hybrid_consensus_fork_enabled(version, false)) {
+    if (is_hybrid_consensus_fork_enabled(version)) {
        if (unlikely(!jobj_binary(val, "stakedifficulty", &stake_difficulty, sizeof(stake_difficulty)))) {
            applog(LOG_ERR, "JSON invalid stake difficulty");
            goto out;
@@ -711,7 +713,7 @@ static bool gbt_work_decode(const json_t *val, struct work *work)
 	}
 
 	/* assemble block header */
-    if (is_hybrid_consensus_fork_enabled(version, false)) {
+    if (is_hybrid_consensus_fork_enabled(version)) {
         // maintain the 4 bytes swapping philosophy
         work->data_size = hyc_data_size;
         work->data[0] = version;
@@ -1206,16 +1208,16 @@ static void stratum_gen_work(struct stratum_ctx *sctx, struct work *work)
 	for (i = 0; i < sctx->xnonce2_size && !++sctx->job.xnonce2[i]; i++);
 
 	/* Assemble block header */
-    if (is_hybrid_consensus_fork_enabled(le32dec(sctx->job.version), false)) {
+    if (is_hybrid_consensus_fork_enabled(be32dec(sctx->job.version))) {
         // maintain the 4 bytes swapping philosophy
         work->data_size = hyc_data_size;
-        work->data[0] = be32dec(sctx->job.version);
+        work->data[0] = le32dec(sctx->job.version);
         for (i = 0; i < 8; i++)
-            work->data[1 + i] = be32dec((uint32_t *)sctx->job.prevhash + i);
+            work->data[1 + i] = le32dec((uint32_t *)sctx->job.prevhash + i);
         for (i = 0; i < 8; i++)
-            work->data[9 + i] = le32dec((uint32_t *)merkle_root + i);
-        work->data[17] = be32dec(sctx->job.ntime);
-        work->data[18] = be32dec(sctx->job.nbits);
+            work->data[9 + i] = be32dec((uint32_t *)merkle_root + i);
+        work->data[17] = le32dec(sctx->job.ntime);
+        work->data[18] = le32dec(sctx->job.nbits);
         work->data[19] = 0;
         work->data[20] = (uint32_t)(be64dec(&sctx->job.stake_difficulty) & 0xFFFFFFFF);
         work->data[21] = (uint32_t)(be64dec(&sctx->job.stake_difficulty) >> 32);

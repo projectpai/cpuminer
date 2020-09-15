@@ -906,12 +906,11 @@ void diff_to_target(uint32_t *target, double diff)
 }
 
 /* Hybrid consensus activation hard fork version bit (little and big endian) */
-static const uint32_t HARDFORK_VERSION_BIT_LE = 0x00000080;
-static const uint32_t HARDFORK_VERSION_BIT_BE = 0x80000000;
+static const uint32_t HARDFORK_VERSION_BIT = 0x80000000;
 
-inline bool is_hybrid_consensus_fork_enabled(const uint32_t version, bool le)
+inline bool is_hybrid_consensus_fork_enabled(const uint32_t version)
 {
-    return version & (le ? HARDFORK_VERSION_BIT_LE : HARDFORK_VERSION_BIT_BE);
+    return version & HARDFORK_VERSION_BIT;
 }
 
 #ifdef WIN32
@@ -1363,15 +1362,15 @@ static bool stratum_notify(struct stratum_ctx *sctx, json_t *params)
 	nbits = json_string_value(json_array_get(params, 6));
 	ntime = json_string_value(json_array_get(params, 7));
     clean = json_is_true(json_array_get(params, 8));
-    stake_difficulty = json_string_value(json_array_get(params, 8));
-    vote_bits = json_string_value(json_array_get(params, 9));
-    ticket_pool_size = json_string_value(json_array_get(params, 10));
-    ticket_lottery_state = json_string_value(json_array_get(params, 11));
-    voters = json_string_value(json_array_get(params, 12));
-    fresh_stake = json_string_value(json_array_get(params, 13));
-    revocations = json_string_value(json_array_get(params, 14));
-    extra_data = json_string_value(json_array_get(params, 15));
-    stake_version = json_string_value(json_array_get(params, 16));
+    stake_difficulty = json_string_value(json_array_get(params, 9));
+    vote_bits = json_string_value(json_array_get(params, 10));
+    ticket_pool_size = json_string_value(json_array_get(params, 11));
+    ticket_lottery_state = json_string_value(json_array_get(params, 12));
+    voters = json_string_value(json_array_get(params, 13));
+    fresh_stake = json_string_value(json_array_get(params, 14));
+    revocations = json_string_value(json_array_get(params, 15));
+    extra_data = json_string_value(json_array_get(params, 16));
+    stake_version = json_string_value(json_array_get(params, 17));
 
 	if (!job_id || !prevhash || !coinb1 || !coinb2 || !version || !nbits || !ntime ||
 	    strlen(prevhash) != 64 || strlen(version) != 8 ||
@@ -1421,15 +1420,50 @@ static bool stratum_notify(struct stratum_ctx *sctx, json_t *params)
 	hex2bin(sctx->job.nbits, nbits, 4);
 	hex2bin(sctx->job.ntime, ntime, 4);
 
-    hex2bin(sctx->job.stake_difficulty, stake_difficulty, 8);
-    hex2bin(sctx->job.vote_bits, vote_bits, 2);
-    hex2bin(sctx->job.ticket_pool_size, ticket_pool_size, 4);
-    hex2bin(sctx->job.ticket_lottery_state, ticket_lottery_state, 6);
-    hex2bin(sctx->job.voters, voters, 2);
-    hex2bin(&sctx->job.fresh_stake, fresh_stake, 1);
-    hex2bin(&sctx->job.revocations, revocations, 1);
-    hex2bin(sctx->job.extra_data, extra_data, 32);
-    hex2bin(sctx->job.stake_version, stake_version, 4);
+    if (stake_difficulty)
+        hex2bin(sctx->job.stake_difficulty, stake_difficulty, 8);
+    else
+        memset(sctx->job.stake_difficulty, 0, sizeof(sctx->job.stake_difficulty));
+
+    if (vote_bits)
+        hex2bin(sctx->job.vote_bits, vote_bits, 2);
+    else
+        memset(sctx->job.vote_bits, 0, sizeof(sctx->job.vote_bits));
+
+    if (ticket_pool_size)
+        hex2bin(sctx->job.ticket_pool_size, ticket_pool_size, 4);
+    else
+        memset(sctx->job.ticket_pool_size, 0, sizeof(sctx->job.ticket_pool_size));
+
+    if (ticket_lottery_state)
+        hex2bin(sctx->job.ticket_lottery_state, ticket_lottery_state, 6);
+    else
+        memset(sctx->job.ticket_lottery_state, 0, sizeof(sctx->job.ticket_lottery_state));
+
+    if (voters)
+        hex2bin(sctx->job.voters, voters, 2);
+    else
+        memset(sctx->job.voters, 0, sizeof(sctx->job.voters));
+
+    if (fresh_stake)
+        hex2bin(&sctx->job.fresh_stake, fresh_stake, 1);
+    else
+        sctx->job.fresh_stake = 0;
+
+    if (revocations)
+        hex2bin(&sctx->job.revocations, revocations, 1);
+    else
+        sctx->job.revocations = 0;
+
+    if (extra_data)
+        hex2bin(sctx->job.extra_data, extra_data, 32);
+    else
+        memset(sctx->job.extra_data, 0, sizeof(sctx->job.extra_data));
+
+    if (stake_version)
+        hex2bin(sctx->job.stake_version, stake_version, 4);
+    else
+        memset(sctx->job.stake_version, 0, sizeof(sctx->job.stake_version));
 
 	sctx->job.clean = clean;
 
