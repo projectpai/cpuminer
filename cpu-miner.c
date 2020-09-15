@@ -1211,13 +1211,13 @@ static void stratum_gen_work(struct stratum_ctx *sctx, struct work *work)
     if (is_hybrid_consensus_fork_enabled(be32dec(sctx->job.version))) {
         // maintain the 4 bytes swapping philosophy
         work->data_size = hyc_data_size;
-        work->data[0] = le32dec(sctx->job.version);
+        work->data[0] = be32dec(sctx->job.version);
         for (i = 0; i < 8; i++)
-            work->data[1 + i] = le32dec((uint32_t *)sctx->job.prevhash + i);
+            work->data[1 + i] = be32dec((uint32_t *)sctx->job.prevhash + i);
         for (i = 0; i < 8; i++)
             work->data[9 + i] = be32dec((uint32_t *)merkle_root + i);
-        work->data[17] = le32dec(sctx->job.ntime);
-        work->data[18] = le32dec(sctx->job.nbits);
+        work->data[17] = be32dec(sctx->job.ntime);
+        work->data[18] = be32dec(sctx->job.nbits);
         work->data[19] = 0;
         work->data[20] = (uint32_t)(be64dec(&sctx->job.stake_difficulty) & 0xFFFFFFFF);
         work->data[21] = (uint32_t)(be64dec(&sctx->job.stake_difficulty) >> 32);
