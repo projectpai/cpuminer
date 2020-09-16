@@ -833,8 +833,13 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
 		uint32_t ntime, nonce;
 		char ntimestr[9], noncestr[9], *xnonce2str, *req;
 
-		le32enc(&ntime, work->data[17]);
-		le32enc(&nonce, work->data[19]);
+        if (is_hyc_work(work)) {
+            be32enc(&ntime, work->data[17]);
+            be32enc(&nonce, work->data[19]);
+        } else {
+            le32enc(&ntime, work->data[17]);
+            le32enc(&nonce, work->data[19]);
+        }
 		bin2hex(ntimestr, (const unsigned char *)(&ntime), 4);
 		bin2hex(noncestr, (const unsigned char *)(&nonce), 4);
 		xnonce2str = abin2hex(work->xnonce2, work->xnonce2_len);
@@ -1215,7 +1220,7 @@ static void stratum_gen_work(struct stratum_ctx *sctx, struct work *work)
         for (i = 0; i < 8; i++)
             work->data[1 + i] = be32dec((uint32_t *)sctx->job.prevhash + i);
         for (i = 0; i < 8; i++)
-            work->data[9 + i] = be32dec((uint32_t *)merkle_root + i);
+            work->data[9 + i] = le32dec((uint32_t *)merkle_root + i);
         work->data[17] = be32dec(sctx->job.ntime);
         work->data[18] = be32dec(sctx->job.nbits);
         work->data[19] = 0;
