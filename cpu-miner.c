@@ -39,7 +39,7 @@
 #include "miner.h"
 
 #define PROGRAM_NAME		"minerd"
-#define LP_SCANTIME		60
+#define LP_SCANTIME 		5
 
 #ifdef __linux /* Linux specific policy and affinity management */
 #include <sched.h>
@@ -259,11 +259,13 @@ static struct option const options[] = {
 	{ 0, 0, 0, 0 }
 };
 
+#define HYC_BLOCK_HEADER_SIZE 140
+
 const uint16_t pow_block_header_size = 80;
-const uint16_t hyc_block_header_size = 140;
+const uint16_t hyc_block_header_size = HYC_BLOCK_HEADER_SIZE;
 
 const uint16_t pow_data_size = 128;
-const uint16_t hyc_data_size = hyc_block_header_size;
+const uint16_t hyc_data_size = HYC_BLOCK_HEADER_SIZE;
 
 struct work {
     uint32_t data[140]; // classic PoW uses 2*512 bits (80*8=20*32 bits the actual header and 48*8=12*32 bits padding)
@@ -447,7 +449,7 @@ static bool gbt_work_decode(const json_t *val, struct work *work)
 	}
 
     // parse the stake fields only if the hybrid consensus is enabled
-    if (is_hybrid_consensus_fork_enabled(version, false)) {
+    if (is_hybrid_consensus_fork_enabled(version)) {
        if (unlikely(!jobj_binary(val, "stakedifficulty", &stake_difficulty, sizeof(stake_difficulty)))) {
            applog(LOG_ERR, "JSON invalid stake difficulty");
            goto out;
@@ -711,7 +713,7 @@ static bool gbt_work_decode(const json_t *val, struct work *work)
 	}
 
 	/* assemble block header */
-    if (is_hybrid_consensus_fork_enabled(version, false)) {
+    if (is_hybrid_consensus_fork_enabled(version)) {
         // maintain the 4 bytes swapping philosophy
         work->data_size = hyc_data_size;
         work->data[0] = version;
@@ -831,8 +833,13 @@ static bool submit_upstream_work(CURL *curl, struct work *work)
 		uint32_t ntime, nonce;
 		char ntimestr[9], noncestr[9], *xnonce2str, *req;
 
-		le32enc(&ntime, work->data[17]);
-		le32enc(&nonce, work->data[19]);
+        if (is_hyc_work(work)) {
+            be32enc(&ntime, work->data[17]);
+            be32enc(&nonce, work->data[19]);
+        } else {
+            le32enc(&ntime, work->data[17]);
+            le32enc(&nonce, work->data[19]);
+        }
 		bin2hex(ntimestr, (const unsigned char *)(&ntime), 4);
 		bin2hex(noncestr, (const unsigned char *)(&nonce), 4);
 		xnonce2str = abin2hex(work->xnonce2, work->xnonce2_len);
@@ -1206,7 +1213,7 @@ static void stratum_gen_work(struct stratum_ctx *sctx, struct work *work)
 	for (i = 0; i < sctx->xnonce2_size && !++sctx->job.xnonce2[i]; i++);
 
 	/* Assemble block header */
-    if (is_hybrid_consensus_fork_enabled(le32dec(sctx->job.version), false)) {
+    if (is_hybrid_consensus_fork_enabled(be32dec(sctx->job.version))) {
         // maintain the 4 bytes swapping philosophy
         work->data_size = hyc_data_size;
         work->data[0] = be32dec(sctx->job.version);
@@ -1217,19 +1224,19 @@ static void stratum_gen_work(struct stratum_ctx *sctx, struct work *work)
         work->data[17] = be32dec(sctx->job.ntime);
         work->data[18] = be32dec(sctx->job.nbits);
         work->data[19] = 0;
-        work->data[20] = (uint32_t)(be64dec(&sctx->job.stake_difficulty) & 0xFFFFFFFF);
-        work->data[21] = (uint32_t)(be64dec(&sctx->job.stake_difficulty) >> 32);
-        work->data[22] = be16dec(&sctx->job.vote_bits);
-        work->data[22] |= be32dec(&sctx->job.ticket_pool_size) << 16;
-        work->data[23] = be32dec(&sctx->job.ticket_pool_size) >> 16;
-        work->data[23] |= ((uint32_t)be16dec((uint16_t *)&sctx->job.ticket_lottery_state + 2) << 16);
-        work->data[24] |= be32dec((uint32_t *)&sctx->job.ticket_lottery_state);
-        work->data[25] = (uint32_t)be16dec(&sctx->job.voters);
+        work->data[20] = (uint32_t)(be64dec(sctx->job.stake_difficulty) & 0xFFFFFFFF);
+        work->data[21] = (uint32_t)(be64dec(sctx->job.stake_difficulty) >> 32);
+        work->data[22] = be16dec(sctx->job.vote_bits);
+        work->data[22] |= be32dec(sctx->job.ticket_pool_size) << 16;
+        work->data[23] = be32dec(sctx->job.ticket_pool_size) >> 16;
+        work->data[23] |= ((uint32_t)le16dec((uint16_t *)sctx->job.ticket_lottery_state) << 16);
+        work->data[24] = le32dec((uint32_t *)(sctx->job.ticket_lottery_state + 2));
+        work->data[25] = (uint32_t)be16dec(sctx->job.voters);
         work->data[25] |= ((uint32_t)sctx->job.fresh_stake) << 16;
         work->data[25] |= ((uint32_t)sctx->job.revocations) << 24;
         for (i = 0; i < 8; i++)
-            work->data[26 + i] = le32dec((uint32_t *)&sctx->job.extra_data  + i);
-        work->data[34] = be32dec(&sctx->job.stake_version);
+            work->data[26 + i] = le32dec((uint32_t *)sctx->job.extra_data  + i);
+        work->data[34] = be32dec(sctx->job.stake_version);
     } else {
         work->data_size = pow_data_size;
         work->data[0] = le32dec(sctx->job.version);
@@ -1296,6 +1303,7 @@ static void *miner_thread(void *userdata)
 		}
 	}
 
+    int alreadySubmitted = 0;
 	while (1) {
 		unsigned long hashes_done;
 		struct timeval tv_start, tv_end, diff;
@@ -1306,8 +1314,10 @@ static void *miner_thread(void *userdata)
 			while (time(NULL) >= g_work_time + 120)
 				sleep(1);
 			pthread_mutex_lock(&g_work_lock);
-            if (work.data[19] >= end_nonce && !memcmp(work.data, g_work.data, 76) && (!is_hyc_work(&work) || !memcmp(work.data+20, g_work.data+20, 60)))
+            if (work.data[19] >= end_nonce && !memcmp(work.data, g_work.data, 76) && (!is_hyc_work(&work) || !memcmp(((uint8_t*)work.data)+80, ((uint8_t*)g_work.data)+80, 60))) {
 				stratum_gen_work(&stratum, &g_work);
+                alreadySubmitted = 0;
+            }
 		} else {
 			int min_scantime = have_longpoll ? LP_SCANTIME : opt_scantime;
 			/* obtain new work from internal workio thread */
@@ -1323,17 +1333,19 @@ static void *miner_thread(void *userdata)
 					goto out;
 				}
 				g_work_time = have_stratum ? 0 : time(NULL);
+                alreadySubmitted = 0;
 			}
 			if (have_stratum) {
 				pthread_mutex_unlock(&g_work_lock);
 				continue;
 			}
 		}
-        if (memcmp(work.data, g_work.data, 76) || (is_hyc_work(&work) && memcmp(work.data+20, g_work.data+20, 60))) {
+        if (memcmp(work.data, g_work.data, 76) || (is_hyc_work(&work) && memcmp(((uint8_t*)work.data)+80, ((uint8_t*)g_work.data)+80, 60))) {
 			work_free(&work);
 			work_copy(&work, &g_work);
 			work.data[19] = 0xffffffffU / opt_n_threads * thr_id;
-		} else
+            alreadySubmitted = 0;
+        } else
 			work.data[19]++;
 		pthread_mutex_unlock(&g_work_lock);
 		work_restart[thr_id].restart = 0;
@@ -1427,9 +1439,16 @@ static void *miner_thread(void *userdata)
 			}
 		}
 
+        if (alreadySubmitted && is_hyc_work(&work)) {
+            usleep(1000);
+            continue;
+        }
+
 		/* if nonce found, submit work */
 		if (rc && !opt_benchmark && !submit_work(mythr, &work))
 			break;
+
+        alreadySubmitted = 1;
 	}
 
 out:

@@ -333,10 +333,9 @@ extern void diff_to_target(uint32_t *target, double diff);
 
 /*
  * Detect the activation of the hybrid consensus by checking the corresponding,
- * bit in the block header version. Treat both little and big endian situations,
- * as specified by the user
+ * bit in the block header version.
  */
-extern bool is_hybrid_consensus_fork_enabled(const uint32_t version, bool le);
+extern bool is_hybrid_consensus_fork_enabled(const uint32_t version);
 
 struct stratum_job {
 	char *job_id;
