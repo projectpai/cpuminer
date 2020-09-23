@@ -361,7 +361,7 @@ json_t *json_rpc_call(CURL *curl, const char *url,
 	json_error_t err;
 	struct curl_slist *headers = NULL;
 	char len_hdr[64];
-	char curl_err_str[CURL_ERROR_SIZE];
+	char curl_err_str[CURL_ERROR_SIZE] = {0};
 	long timeout = (flags & JSON_RPC_LONGPOLL) ? opt_timeout : 30;
 	struct header_info hi = {0};
 
@@ -422,6 +422,9 @@ json_t *json_rpc_call(CURL *curl, const char *url,
 
 	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
+	// force the call to return all info despite failure
+	curl_easy_setopt(curl, CURLOPT_FAILONERROR, false);
+
 	rc = curl_easy_perform(curl);
 	if (curl_err != NULL)
 		*curl_err = rc;
@@ -432,6 +435,32 @@ json_t *json_rpc_call(CURL *curl, const char *url,
 			applog(LOG_ERR, "HTTP request failed: %s", curl_err_str);
 		if (curl_err && (flags & JSON_RPC_QUIET_404) && http_rc == 404)
 			*curl_err = CURLE_OK;
+		goto err_out;
+	}
+
+	// in case of error, process the error and exit
+	curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_rc);
+	if (http_rc < 200 || http_rc >= 300) {
+		if (!((flags & JSON_RPC_LONGPOLL) && rc == CURLE_OPERATION_TIMEDOUT) &&
+			!((flags & JSON_RPC_QUIET_404) && http_rc == 404) && strlen(curl_err_str) != 0)
+			applog(LOG_ERR, "HTTP request failed: %s", curl_err_str);
+		if ((flags & JSON_RPC_QUIET_404) && http_rc == 404)
+			*curl_err = CURLE_OK;
+		if (http_rc == 500) {
+			json_buf = hack_json_numbers(all_data.buf);
+			errno = 0; /* needed for Jansson < 2.1 */
+			val = JSON_LOADS(json_buf, &err);
+			free(json_buf);
+			if (val) {
+				err_val = json_object_get(val, "error");
+				const char *message = json_string_value(json_object_get(err_val, "message"));
+				if (strstr(message, "too-few-votes"))
+					applog(LOG_ERR, "Waiting for new work -- Not enough votes for currently block");
+				else
+					applog(LOG_ERR, "HTTP request failed: %s", message);
+			}
+			*curl_err = CURLE_HTTP_RETURNED_ERROR;
+		}
 		goto err_out;
 	}
 
