@@ -176,7 +176,9 @@ Options:\n\
                           scrypt    scrypt(1024, 1, 1) (default)\n\
                           scrypt:N  scrypt(N, 1, 1)\n\
                           sha256d   SHA-256d\n\
-			  paicoin   SHA-256/SHAKE256 per Project PAI\n\
+                          shake256  SHAKE-256 (Keccak)\n\
+                          paicoin   SHA-256d until Hybrid Consensus height and\
+                                     SHAKE-256 (Keccak) afterwards\n\
   -o, --url=URL         URL of mining server\n\
   -O, --userpass=U:P    username:password pair for mining server\n\
   -u, --user=USERNAME   username for mining server\n\
@@ -1304,7 +1306,6 @@ static void *miner_thread(void *userdata)
 		}
 	}
 
-    int alreadySubmitted = 0;
 	while (1) {
 		unsigned long hashes_done;
 		struct timeval tv_start, tv_end, diff;
@@ -1317,7 +1318,6 @@ static void *miner_thread(void *userdata)
 			pthread_mutex_lock(&g_work_lock);
             if (work.data[19] >= end_nonce && !memcmp(work.data, g_work.data, 76) && (!is_hyc_work(&work) || !memcmp(((uint8_t*)work.data)+80, ((uint8_t*)g_work.data)+80, 60))) {
 				stratum_gen_work(&stratum, &g_work);
-                alreadySubmitted = 0;
             }
 		} else {
 			int min_scantime = have_longpoll ? LP_SCANTIME : opt_scantime;
@@ -1334,7 +1334,6 @@ static void *miner_thread(void *userdata)
 					goto out;
 				}
 				g_work_time = have_stratum ? 0 : time(NULL);
-                alreadySubmitted = 0;
 			}
 			if (have_stratum) {
 				pthread_mutex_unlock(&g_work_lock);
@@ -1345,7 +1344,6 @@ static void *miner_thread(void *userdata)
 			work_free(&work);
 			work_copy(&work, &g_work);
 			work.data[19] = 0xffffffffU / opt_n_threads * thr_id;
-            alreadySubmitted = 0;
         } else
 			work.data[19]++;
 		pthread_mutex_unlock(&g_work_lock);
@@ -1440,16 +1438,9 @@ static void *miner_thread(void *userdata)
 			}
 		}
 
-        if (alreadySubmitted && is_hyc_work(&work)) {
-            usleep(1000);
-            continue;
-        }
-
 		/* if nonce found, submit work */
 		if (rc && !opt_benchmark && !submit_work(mythr, &work))
 			break;
-
-        alreadySubmitted = 1;
 	}
 
 out:
